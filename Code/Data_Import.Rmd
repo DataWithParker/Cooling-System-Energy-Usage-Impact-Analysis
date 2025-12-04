@@ -1,0 +1,475 @@
+---
+title: "Data Import"
+author: "R. Parker"
+date: "2024-12-03"
+output: html_document
+---
+```{r}
+# Pull all Weather Data files included in cleaned housing dataset
+
+# Load required libraries
+library(readr)
+library(dplyr)
+library(purrr)
+library(httr)
+library(lubridate)
+
+# Define file path and base URL
+housing_file <- "~/Downloads/housing_data_cleaned.csv"
+weather_base_url <- "https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/weather/2023-weather-data"
+
+# Read the housing data
+housing_data <- read_csv(housing_file, show_col_types = FALSE)
+
+# Extract unique county codes
+unique_counties <- unique(housing_data$in.county)
+
+# Generate URLs for all counties
+weather_urls <- unique_counties %>%
+  as.character() %>%
+  map_chr(~ paste0(weather_base_url, "/", .x, ".csv"))
+
+# Display the URLs
+weather_urls
+
+# save the URLs to a file
+output_file <- "~/Downloads/weather_urls.txt"
+write_lines(weather_urls, output_file)
+
+message("Weather URLs have been successfully saved to: ", output_file)
+```
+
+```{r}
+# download all csv files for the weather data
+
+# Load required libraries
+library(readr)
+library(dplyr)
+library(purrr)
+library(httr)
+
+# Define file paths and base directory
+housing_file <- "~/Downloads/housing_data_cleaned.csv"
+weather_base_url <- "https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/weather/2023-weather-data"
+output_folder <- "~/Downloads/weather_data_files/"
+
+# Create the output folder if it doesn't exist
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder, recursive = TRUE)
+}
+
+# Read the housing data
+housing_data <- read_csv(housing_file, show_col_types = FALSE)
+
+# Extract unique county codes
+unique_counties <- unique(housing_data$in.county)
+
+# Generate URLs for all counties
+weather_urls <- unique_counties %>%
+  as.character() %>%
+  map_chr(~ paste0(weather_base_url, "/", .x, ".csv"))
+
+# Function to download and save a weather file (not +5 degrees)
+download_weather_file <- function(url, output_folder) {
+  county_code <- basename(url) %>% str_remove(".csv")
+  output_path <- paste0(output_folder, county_code, ".csv")
+  
+  message("Downloading: ", url)
+  tryCatch({
+    GET(url, write_disk(output_path, overwrite = TRUE))
+    message("Saved: ", output_path)
+  }, error = function(e) {
+    message("Error downloading file: ", url, "\nError: ", e$message)
+  })
+}
+
+# Download all weather files 
+message("Starting downloads...")
+walk(weather_urls, ~ download_weather_file(.x, output_folder))
+
+message("All weather data files have been saved to: ", output_folder)
+
+```
+
+```{r}
+# Pull all Energy Usage Data in the housing data set and save in a folder
+
+# Define file paths and base directory
+housing_file <- "~/Downloads/housing_data_cleaned.csv"
+energy_base_url <- "https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/2023-houseData"
+output_folder <- "~/Downloads/energy_usage_data_files/"
+
+# Create the output folder if it doesn't exist
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder, recursive = TRUE)
+}
+
+# Read the housing data
+housing_data <- read_csv(housing_file, show_col_types = FALSE)
+
+# Extract unique building IDs
+unique_bldg_ids <- unique(housing_data$bldg_id)
+
+# Generate URLs for all building IDs
+energy_urls <- unique_bldg_ids %>%
+  as.character() %>%
+  map_chr(~ paste0(energy_base_url, "/", .x, ".parquet"))
+
+# Function to download and save an energy file
+download_energy_file <- function(url, output_folder) {
+  bldg_id <- basename(url) %>% str_remove(".parquet")
+  output_path <- paste0(output_folder, bldg_id, ".parquet")
+  
+  message("Downloading: ", url)
+  tryCatch({
+    GET(url, write_disk(output_path, overwrite = TRUE))
+    message("Saved: ", output_path)
+  }, error = function(e) {
+    message("Error downloading file: ", url, "\nError: ", e$message)
+  })
+}
+
+# Download all energy files
+message("Starting downloads...")
+walk(energy_urls, ~ download_energy_file(.x, output_folder))
+
+message("All energy usage data files have been saved to: ", output_folder)
+
+```
+
+```{r}
+# Define the folder for CSV files
+csv_output_folder <- "~/Downloads/energy_usage_csv_files/"
+output_folder <- "~/Downloads/energy_usage_data_files/" 
+
+# Create the CSV output folder if it doesn't exist
+if (!dir.exists(csv_output_folder)) {
+  dir.create(csv_output_folder, recursive = TRUE)
+}
+
+# List all Parquet files in the output folder
+parquet_files <- list.files(output_folder, full.names = TRUE, pattern = "\\.parquet$")
+
+# Function to convert Parquet file to CSV
+convert_parquet_to_csv <- function(parquet_file, csv_folder) {
+  # Extract the base name of the file (e.g., building ID)
+  bldg_id <- basename(parquet_file) %>% str_remove(".parquet")
+  # Define the output CSV file path
+  csv_path <- file.path(csv_folder, paste0(bldg_id, ".csv"))
+  
+  tryCatch({
+    # Read the Parquet file
+    data <- arrow::read_parquet(parquet_file)
+    
+    # Write the data to a CSV file
+    readr::write_csv(data, csv_path)
+    message("Converted ", parquet_file, " to CSV: ", csv_path)
+  }, error = function(e) {
+    message("Error converting file: ", parquet_file, "\nError: ", e$message)
+  })
+}
+
+# Convert each Parquet file to CSV
+message("Starting Parquet to CSV conversion...")
+walk(parquet_files, ~ convert_parquet_to_csv(.x, csv_output_folder))
+
+message("All Parquet files have been converted to CSV and saved in: ", csv_output_folder)
+
+```
+
+```{r}
+# create tables for weather and energy usage data
+
+# weather data for july 
+
+# Load necessary libraries
+library(dplyr)
+library(lubridate)
+library(readr)
+library(stringr)
+
+# Function to filter CSV data for July 2018 and save to a new file
+filter_july_data <- function(csv_file, output_folder) {
+  # Extract the building ID from the file name
+  bldg_id <- basename(csv_file) %>% str_remove(".csv")
+  # Define the output file path
+  output_path <- file.path(output_folder, paste0(bldg_id, ".csv"))
+  
+  tryCatch({
+    # Read the CSV file
+    data <- readr::read_csv(csv_file)
+    
+    # Parse the 'time' column to date-time format and filter for July 2018
+    july_data <- data %>%
+      mutate(time = lubridate::ymd_hms(time)) %>% # Convert 'time' column to date-time format
+      filter(year(time) == 2018 & month(time) == 7) # Filter for year 2018 and month July
+    
+    # Write the filtered data to a new CSV file
+    readr::write_csv(july_data, output_path)
+    message("Filtered July 2018 data for ", csv_file, " and saved to: ", output_path)
+  }, error = function(e) {
+    message("Error processing file: ", csv_file, "\nError: ", e$message)
+  })
+}
+
+# Apply the function to all CSV files using a for loop
+for (csv_file in csv_files) {
+  filter_july_data(csv_file, filtered_csv_folder)
+}
+
+message("All July 2018 data has been filtered and saved in: ", filtered_csv_folder)
+
+
+```
+
+```{r}
+# simplifies data folder to only include july 2018, sqft = 1690 homes usage 
+
+library(dplyr)
+library(readr)
+library(stringr)
+
+# Define folders
+july_data_folder <- "~/Downloads/energy_usage_july_data_files"
+filtered_output_folder <- "~/Downloads/energy_usage_csv_files/matched_bldg_data/"
+
+# Create the output folder if it doesn't exist
+if (!dir.exists(filtered_output_folder)) {
+  dir.create(filtered_output_folder, recursive = TRUE)
+}
+
+# Load the housing data (adjust the file path accordingly)
+housing_data <- read_csv("~/Downloads/housing_data_cleaned.csv")
+
+# Filter housing data for in.sqft = 1690
+filtered_housing <- housing_data %>% filter(in.sqft == 1690)
+
+# Extract the list of matching bldg_id
+matching_bldg_ids <- filtered_housing$bldg_id
+
+# List all CSV files in the July data folder
+july_csv_files <- list.files(july_data_folder, full.names = TRUE, pattern = "\\.csv$")
+
+# Function to filter and copy matching files
+filter_matching_files <- function(csv_file, matching_ids, output_folder) {
+  # Extract the bldg_id from the filename
+  bldg_id <- basename(csv_file) %>% str_remove(".csv")
+  
+  # Check if the bldg_id is in the matching list
+  if (bldg_id %in% matching_ids) {
+    # Copy the file to the output folder
+    file.copy(csv_file, file.path(output_folder, basename(csv_file)))
+    message("Copied matching file: ", csv_file, " to ", output_folder)
+  }
+}
+
+# Apply the function to filter and copy files
+message("Filtering files based on matching bldg_id...")
+lapply(july_csv_files, function(x) filter_matching_files(x, matching_bldg_ids, filtered_output_folder))
+message("Filtering complete. Matched files are in: ", filtered_output_folder)
+
+```
+
+```{r}
+# isolate all july weather data for all the counties in the housing data file
+
+# Load necessary libraries
+library(tidyverse)
+library(lubridate)
+
+# Define input and output folder paths
+weather_data_folder <- "~/Downloads/weather_data_files"
+july_weather_data_folder <- "~/Downloads/july_weather_data"
+
+# Create the output folder if it doesn't exist
+if (!dir.exists(july_weather_data_folder)) {
+  dir.create(july_weather_data_folder, recursive = TRUE)
+}
+
+# Get a list of all CSV files in the weather data folder
+weather_files <- list.files(weather_data_folder, full.names = TRUE, pattern = "\\.csv$")
+
+# Function to filter for July data and save the filtered files
+filter_july_weather_data <- function(file_path, output_folder) {
+  # Extract the county ID from the file name
+  county_id <- basename(file_path) %>% str_remove(".csv")
+  
+  # Read the weather data file
+  tryCatch({
+    data <- read_csv(file_path)
+    
+    # Ensure the date_time column is in datetime format
+    data <- data %>% mutate(date_time = ymd_hms(date_time))
+    
+    # Filter rows for the month of July
+    july_data <- data %>% filter(month(date_time) == 7)
+    
+    # Define the output file path
+    output_file_path <- file.path(output_folder, paste0(county_id, ".csv"))
+    
+    # Save the filtered data to the output folder
+    write_csv(july_data, output_file_path)
+    message("Filtered and saved July weather data for file: ", county_id)
+  }, error = function(e) {
+    message("Error processing file: ", file_path, "\nError: ", e$message)
+  })
+}
+
+# Apply the function to all weather files
+walk(weather_files, ~filter_july_weather_data(.x, july_weather_data_folder))
+
+message("All July weather data files have been created in the folder: ", july_weather_data_folder)
+
+```
+
+```{r}
+# create a table that combines all weather data files and includes a in.county column that matches the housing data
+# Load necessary libraries
+library(tidyverse)
+library(lubridate)
+
+# Define the folder containing weather data files
+weather_data_folder <- "~/Downloads/july_weather_data"
+
+# List all CSV files in the weather data folder
+weather_files <- list.files(weather_data_folder, full.names = TRUE, pattern = "\\.csv$")
+
+# Function to read a weather file and add the in.county column
+read_weather_file <- function(file_path) {
+  # Extract the county ID from the file name
+  county_id <- basename(file_path) %>% str_remove(".csv")
+  
+  # Read the CSV file
+  data <- read_csv(file_path) %>%
+    # Add the in.county column
+    mutate(in.county = county_id)
+  
+  return(data)
+}
+
+# Read and combine all weather data files into a single table
+combined_weather_data <- weather_files %>%
+  map_dfr(read_weather_file)
+
+# Display a summary of the combined data
+message("Combined weather data table created with the following dimensions: ",
+        nrow(combined_weather_data), " rows and ", ncol(combined_weather_data), " columns.")
+
+# Save the combined table to a CSV file (optional)
+output_combined_file <- "~/Downloads/july_weather_data.csv"
+write_csv(combined_weather_data, output_combined_file)
+
+message("Combined weather data saved to: ", output_combined_file)
+
+```
+
+```{r}
+# create a daily combined weather data file
+
+# Load necessary libraries
+library(tidyverse)
+
+# Define the input file path (daily weather data file)
+input_daily_weather_file <- "~/Downloads/july_weather_data.csv"
+
+# Define the output file path
+output_summarized_weather_file <- "~/Downloads/july_daily_weather_data.csv.csv"
+
+# Read the daily weather data
+daily_weather_data <- read_csv(input_daily_weather_file)
+
+# Ensure the date column is correctly parsed
+daily_weather_data <- daily_weather_data %>%
+  mutate(date = as.Date(date_time, format = "%Y-%m-%d"))
+
+# Group by in.county and date, then calculate daily averages
+summarized_weather_data <- daily_weather_data %>%
+  group_by(in.county, date) %>%
+  summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+
+# Save the summarized weather data to a new CSV file
+write_csv(summarized_weather_data, output_summarized_weather_file)
+
+message("Daily summarized weather data for July saved to: ", output_summarized_weather_file)
+
+```
+
+```{r}
+# create a table that combines all energy usage data files and includes a bldg_id column that matches the housing data
+# Load necessary libraries
+library(tidyverse)
+
+# Define the folder containing energy usage data files
+energy_usage_folder <- "~/Downloads/july_bldg_energy_usage_data"
+
+# List all CSV files in the energy usage folder
+energy_files <- list.files(energy_usage_folder, full.names = TRUE, pattern = "\\.csv$")
+
+# Function to read an energy usage file and add the bldg_id column
+read_energy_file <- function(file_path) {
+  # Extract the building ID (bldg_id) from the file name
+  bldg_id <- basename(file_path) %>% str_remove(".csv")
+  
+  # Read the CSV file
+  data <- read_csv(file_path) %>%
+    # Add the bldg_id column
+    mutate(bldg_id = bldg_id)
+  
+  return(data)
+}
+
+# Read and combine all energy usage data files into a single table
+combined_energy_data <- energy_files %>%
+  map_dfr(read_energy_file)
+
+# Display a summary of the combined data
+message("Combined energy usage data table created with the following dimensions: ",
+        nrow(combined_energy_data), " rows and ", ncol(combined_energy_data), " columns.")
+
+# Save the combined table to a CSV file (optional)
+output_combined_file <- "~/Downloads/combined_energy_usage_data.csv"
+write_csv(combined_energy_data, output_combined_file)
+
+message("Combined energy usage data saved to: ", output_combined_file)
+
+```
+
+```{r}
+# simplify combined energy usage file by summing each day incremental usage so now it shows daily usage by category
+# create a new column that shows the total energy consumption per day (which sums each column consumption) for each day 
+# make sure to maintain the bldg_id, rename new file july_daily_combined_energy_usage
+
+# Load necessary libraries
+library(tidyverse)
+
+# Define the input file path (combined energy usage file)
+input_combined_file <- "~/Downloads/combined_energy_usage_data.csv"
+
+# Define the output file path
+output_daily_file <- "~/Downloads/july_daily_combined_energy_usage.csv"
+
+# Read the combined energy usage data
+combined_energy_data <- read_csv(input_combined_file)
+
+# Ensure the timestamp column is correctly parsed as a date
+combined_energy_data <- combined_energy_data %>%
+  mutate(date = as.Date(time, format = "%Y-%m-%d"))
+
+# Group by bldg_id and date, then sum incremental usage for each category
+daily_energy_usage <- combined_energy_data %>%
+  group_by(bldg_id, date) %>%
+  summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop") %>%
+  # Create a new column for total energy consumption per day
+  mutate(total_energy_consumption = rowSums(across(-c(bldg_id, date))))
+
+# Save the simplified daily data to a new CSV file
+write_csv(daily_energy_usage, output_daily_file)
+
+message("Simplified daily energy usage file saved to: ", output_daily_file)
+
+```
+
+```{r}
+
+
+

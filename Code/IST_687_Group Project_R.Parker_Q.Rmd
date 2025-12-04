@@ -1,0 +1,821 @@
+---
+title: "IST 687_Group Project_R.Parker_Q"
+author: "R. Parker"
+date: "2024-12-02"
+output: pdf_document 
+---
+
+```{r}
+################################################################################
+#' Research Question
+
+#'“How do residential cooling systems impact energy usage during peak summer 
+#'conditions, and what strategies can be implemented to optimize cooling 
+#'efficiency and reduce overall electricity demand?”
+
+################################################################################
+```
+
+
+```{r}
+################################################################################
+# MetaData
+################################################################################
+
+library(data.table)
+
+metadata_url <- "https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/data_dictionary.csv"
+
+metadata <- fread(metadata_url)
+
+################################################################################
+# Energy and Weather Data Analysis Script
+################################################################################
+
+# Load required packages
+library(tidyverse)  # For data manipulation and visualization
+library(lubridate)  # For date/time handling
+library(data.table) # For handling large data
+
+################################################################################
+# MAIN EXECUTION FUNCTION
+################################################################################
+
+#' Main Function to Combine Housing, Weather, and Energy Data
+#' Note: data transformations from original state were saved in a seperate .rmd file 
+#' @param housing_file Path to the housing data CSV file
+#' @param weather_file Path to the July daily weather data CSV file
+#' @param energy_file Path to the July daily energy usage data CSV file
+#' @return Combined data frame with energy, weather, and housing information
+
+main <- function(housing_file, weather_file, energy_file) {
+  
+  message("\n1. Reading housing data...")
+  # Load housing data
+  housing_data <- read_csv(housing_file, show_col_types = FALSE)
+  
+  message("\n2. Reading weather data...")
+  # Load weather data
+  weather_data <- read_csv(weather_file, show_col_types = FALSE) %>%
+    rename(date = date)  # Ensure consistent column naming for joining
+  
+  message("\n3. Reading energy usage data...")
+  # Load energy usage data
+  energy_data <- read_csv(energy_file, show_col_types = FALSE) %>%
+    rename(date = date)  # Ensure consistent column naming for joining
+  
+  message("\n4. Adding `in.county` to energy data...")
+  # Add `in.county` to energy data by joining with housing data on `bldg_id`
+  energy_data <- energy_data %>%
+    inner_join(housing_data %>% select(bldg_id, in.county), by = "bldg_id")
+  
+  message("\n5. Combining energy and weather data...")
+  # Combine energy data and weather data on `date` and `in.county`
+  combined_data <- energy_data %>%
+    left_join(weather_data, by = c("date", "in.county")) %>%  # Join on date and county
+    left_join(housing_data, by = "bldg_id")                   # Join on building ID
+  
+  message("\nData combination complete!")
+  return(combined_data)
+}
+
+################################################################################
+# FINAL FILE COMBINATION -  Housing, Weather, and Energy Data (DAILY ONLY)
+################################################################################
+
+housing_file <- "~/Downloads/filtered_housing_data.csv"
+weather_file <- "~/Downloads/july_daily_weather_data.csv"
+energy_file <- "~/Downloads/july_daily_energy_usage_final.csv"
+output_file <- "~/Downloads/final_combined_data.csv"
+
+# Load data
+message("Loading datasets...")
+housing_data <- fread(housing_file)
+str(housing_data)
+weather_data <- fread(weather_file)
+str(weather_data)
+energy_data <- fread(energy_file)
+str(energy_data)
+
+# Standardize date columns
+message("Standardizing `date` column formats...")
+
+if ("date" %in% colnames(weather_data)) {
+  weather_data[, date := as.Date(as.character(date), format = "%Y-%m-%d")]
+}
+
+# Standardize `date` in `energy_data`
+if ("date" %in% colnames(energy_data)) {
+  energy_data[, date := as.Date(as.character(date), format = "%Y-%m-%d")]
+}
+
+# Combine energy_data and weather_data on `date` and `in.county`
+message("\nCombining energy and weather data...")
+combined_data <- merge(
+  energy_data,
+  weather_data,
+  by = c("date", "in.county"),
+  all.x = TRUE  # Keep all rows from `energy_data`
+)
+
+# Add housing data to the combined dataset
+message("\nAdding housing data to the combined dataset...")
+combined_data <- merge(
+  combined_data,
+  housing_data,
+  by = "bldg_id",  # Merge on `bldg_id`
+  all.x = TRUE  # Keep all rows from the combined energy and weather data
+)
+
+# Output Combined File
+fwrite(combined_data, output_file)
+
+print(head(combined_data))
+
+print(tail(combined_data))
+
+print(str(combined_data))
+
+```
+```{r}
+################################################################################
+# DATA CLEANING (DAILY)
+################################################################################
+
+library(dplyr)  
+
+# Function for missing values
+analyze_missing_values <- function(data) {
+  
+  missing_summary <- colSums(is.na(data))
+  missing_table <- data.frame(
+    Column = names(missing_summary),
+    Missing_Values = missing_summary,
+    Total_Values = nrow(data),
+    Percentage_Missing = (missing_summary / nrow(data)) * 100
+  )
+  
+  print(missing_table)
+  
+}
+
+analyze_missing_values(combined_data) # missing values for dataset
+
+```
+
+
+```{r}
+################################################################################
+# DATA EXPLORATION VIEWS AND GENERAL QUESTIONS 
+################################################################################
+################################################################################
+# FILTER COMBINED DATA
+################################################################################
+
+# Inspect Data
+cat("Initial number of rows in combined_data:", nrow(combined_data), "\n")
+
+# Filter out rows where in.has_pv is "yes"; renewable's have negative usage
+combined_data <- combined_data[combined_data$in.has_pv != "yes", ]
+cat("After removing rows with PV systems, rows left:", nrow(combined_data), "\n")
+
+# Remove all renters; they cannot implement strategies
+combined_data <- combined_data[combined_data$in.tenure != "renter", ]
+cat("After removing renters, rows left:", nrow(combined_data), "\n")
+
+# Remove all vacancies
+combined_data <- combined_data[combined_data$in.vacancy_status != "vacant", ]
+cat("After removing vacant properties, rows left:", nrow(combined_data), "\n")
+
+# Check if combined_data is empty
+if (nrow(combined_data) == 0) {
+  cat("No data available after filtering. Please review the filtering criteria.\n")
+  stop("Dataset is empty. Aborting further analysis.")
+} else {
+  cat("Rows with negative Total Energy Consumption, homes with PV systems, renters, and vacant properties have been removed from the combined_data table.\n")
+}
+
+################################################################################
+# 1. In July, What city has the highest energy usage? 
+################################################################################
+county_usage_summary <- combined_data %>%
+  group_by(in.weather_file_city) %>%
+  summarise(total_usage_kWh = sum(Total_Energy_Consumption, na.rm = TRUE)) %>%
+  arrange(desc(total_usage_kWh))
+
+print(county_usage_summary)
+
+barplot <- ggplot(county_usage_summary, aes(x = reorder(in.weather_file_city, total_usage_kWh), y = total_usage_kWh)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(
+    title = "Total Energy Usage (kWh) per City - July 2018",
+    x = "City",
+    y = "Total Energy Usage (kWh)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(barplot)
+
+################################################################################
+# 2. What is the number of homes per city?
+################################################################################
+homes_per_city <- housing_data %>%
+  group_by(in.weather_file_city) %>%
+  summarise(num_homes = n_distinct(bldg_id)) %>%
+  arrange(desc(num_homes))
+
+print(homes_per_city)
+
+barplot <- ggplot(homes_per_city, aes(x = reorder(in.weather_file_city, num_homes), y = num_homes)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  labs(
+    title = "Number of Homes per City - July 2018",
+    x = "City",
+    y = "Number of Homes"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(barplot)
+
+################################################################################
+# 3. Summarize Metrics per City
+################################################################################
+combined_data$EUI <- combined_data$Total_Energy_Consumption / combined_data$in.sqft
+
+summary_metrics <- function(x) {
+  c( Min = min(x, na.rm = TRUE), 
+    Max = max(x, na.rm = TRUE))
+}
+
+city_summary <- aggregate(cbind(in.sqft, Total_Energy_Consumption) ~ in.weather_file_city, 
+                          data = combined_data, 
+                          FUN = summary_metrics)
+
+city_summary <- do.call(data.frame, city_summary)
+colnames(city_summary) <- c("City", "Min_Size_Sq_Ft", "Max_Size_Sq_Ft",
+                            "Min_Total_Energy_Consumption", "Max_Total_Energy_Consumption")
+
+city_summary[, -1] <- round(city_summary[, -1], 2)
+
+cat("Summary Table 1: Home Metrics per City (Average, Min, Max)\n")
+print(city_summary)
+
+################################################################################
+# 3. Summarize Energy End Use per City
+################################################################################
+# Load required library
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Simplify column names in combined_data
+colnames(combined_data) <- gsub("out\\.(electricity|fuel_oil|natural_gas|propane)\\.", "", colnames(combined_data))
+colnames(combined_data) <- gsub("\\.energy_consumption", "", colnames(combined_data))
+colnames(combined_data) <- gsub("_", " ", colnames(combined_data)) # Replace underscores with spaces
+
+# List of energy consumption columns (after simplification)
+energy_columns <- c(
+  "ceiling fan",
+  "clothes dryer",
+  "clothes washer",
+  "cooling fans pumps",
+  "cooling",
+  "dishwasher",
+  "freezer",
+  "heating fans pumps",
+  "heating hp bkup",
+  "heating",
+  "hot tub heater",
+  "hot tub pump",
+  "hot water",
+  "lighting exterior",
+  "lighting garage",
+  "lighting interior",
+  "mech vent",
+  "plug loads",
+  "pool heater",
+  "pool pump",
+  "pv",
+  "range oven",
+  "refrigerator",
+  "well pump",
+  "heating hp bkup",
+  "heating",
+  "hot water",
+  "clothes dryer",
+  "fireplace",
+  "grill",
+  "heating hp bkup",
+  "heating",
+  "hot tub heater",
+  "hot water",
+  "lighting",
+  "pool heater",
+  "range oven",
+  "clothes dryer",
+  "heating hp bkup",
+  "heating",
+  "hot water",
+  "range oven"
+)
+
+# energy consumption by city
+city_energy_totals <- combined_data %>%
+  select(`in.weather file city`, all_of(energy_columns)) %>%
+  group_by(`in.weather file city`) %>%
+  summarise(across(everything(), sum, na.rm = TRUE))
+
+# data trasnformation to use in plot
+city_energy_totals_long <- city_energy_totals %>%
+  pivot_longer(cols = -`in.weather file city`,  # Use all columns except the city column
+               names_to = "Energy_End_Use", 
+               values_to = "Total_Consumption")
+
+# energy end use breakdown plot per city
+ggplot(city_energy_totals_long, aes(x = `in.weather file city`, y = Total_Consumption, fill = Energy_End_Use)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Total Energy End Uses Across Cities",
+    x = "City",
+    y = "Total Energy Consumption (kWh)",
+    fill = "Energy End Use"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+################################################################################
+# 4. Summarize End Use Percentage 
+################################################################################
+
+# Calculate total energy consumption per city for normalization
+
+# total energy consumption across all cities
+total_end_use_percentages <- combined_data %>%
+  select(all_of(energy_columns)) %>%
+  summarise(across(everything(), sum, na.rm = TRUE)) %>%
+  mutate(Total_Energy = rowSums(across(everything()), na.rm = TRUE)) %>%
+  mutate(across(everything(), ~ (. / Total_Energy) * 100, .names = "percent_{col}")) %>%
+  select(starts_with("percent"))
+
+# Reshape the data into a two-column format
+total_end_use_percentages_long <- total_end_use_percentages %>%
+  pivot_longer(cols = everything(),
+               names_to = "Energy_End_Use",
+               values_to = "Percentage") %>%
+  mutate(
+    Energy_End_Use = gsub("percent_out\\.(electricity|fuel_oil|natural_gas|propane)\\.", "", Energy_End_Use),
+    Energy_End_Use = gsub("\\.energy_consumption", "", Energy_End_Use),
+    Energy_End_Use = gsub("_", " ", Energy_End_Use),
+    Percentage = round(Percentage, 2)  # Round to 2 decimal places
+  )
+
+print(total_end_use_percentages_long)
+
+```
+
+
+
+```{r}
+################################################################################
+# 4. Summarize HVAC Type vs Overall Energy Use
+################################################################################
+
+# Ensure all column names in combined_data are unique and syntactically valid
+colnames(combined_data) <- make.names(colnames(combined_data), unique = TRUE)
+
+hvac_cooling_summary <- combined_data %>%
+  group_by(`bldg.id`, `in.hvac.cooling.type`) %>%
+  summarise(
+    Home_Count = n_distinct(bldg.id),  
+    # Count the number of unique homes for each building and HVAC type
+    Total_Cooling_Energy = sum(cooling, na.rm = TRUE),  
+    # Total cooling energy for this group
+    Cooling_Efficiency_Labels = paste(unique(`in.hvac.cooling.efficiency`), collapse = ", ")
+    # Efficiency rating type for each cooling equipment per home
+  ) %>%
+  ungroup() %>%
+  group_by(`in.hvac.cooling.type`) %>%
+  summarise(
+    Total_Homes = sum(Home_Count),  
+    # Total number of homes with each HVAC type
+    Total_Cooling_Energy = sum(Total_Cooling_Energy, na.rm = TRUE),
+    Cooling_Efficiency_Labels = paste(unique(Cooling_Efficiency_Labels), collapse = ", ")
+  ) %>%
+  mutate(
+    Percentage_Cooling = (Total_Cooling_Energy / sum(Total_Cooling_Energy, na.rm = TRUE)) * 100
+  ) %>%
+  select(`in.hvac.cooling.type`, Total_Homes, Percentage_Cooling, Cooling_Efficiency_Labels)
+
+hvac_cooling_summary <- hvac_cooling_summary %>%
+  mutate(Percentage_Cooling = round(Percentage_Cooling, 2)) # clean up data
+
+print(hvac_cooling_summary)
+```
+
+
+```{r}
+################################################################################
+# Hourly Data Import and Cleaning
+################################################################################
+library(data.table)
+library(dplyr)
+
+housing_file <- "~/Downloads/filtered_housing_data.csv"
+weather_hourly_file <- "~/Downloads/combined_july_weather_data.csv"
+energy_hourly_file <- "~/Downloads/combined_energy_usage_data.csv"
+output_hourly_file <- "~/Downloads/final_hourly_combined_data.csv"
+
+housing_data <- fread(housing_file)
+weather_hourly_data <- fread(weather_hourly_file)
+energy_hourly_data <- fread(energy_hourly_file)
+
+colnames(housing_data) <- make.names(colnames(housing_data), unique = TRUE)
+colnames(weather_hourly_data) <- make.names(colnames(weather_hourly_data), unique = TRUE)
+colnames(energy_hourly_data) <- make.names(colnames(energy_hourly_data), unique = TRUE)
+
+# Add `in.county` to energy data by matching `bldg_id` from housing data
+if ("bldg_id" %in% colnames(housing_data) && "bldg_id" %in% colnames(energy_hourly_data)) {
+  message("Adding `in.county` column to energy data...")
+  energy_hourly_data <- merge(
+    energy_hourly_data,
+    housing_data[, .(bldg_id, in.county)], 
+    by = "bldg_id",
+    all.x = TRUE
+  )
+} else {
+  stop("`bldg_id` column is missing in housing or energy data.")
+}
+
+# Add `date` column to weather_hourly_data if it only has `date_time`
+if ("date_time" %in% colnames(weather_hourly_data)) {
+  message("Extracting `date` from `date_time` in weather_hourly_data...")
+  weather_hourly_data[, date := as.Date(date_time, format = "%Y-%m-%d %H:%M:%S")]
+} else {
+  stop("`date_time` column is missing in weather_hourly_data.")
+}
+
+# Standardize `date` columns
+message("Standardizing `date` column formats...")
+if ("date" %in% colnames(weather_hourly_data)) {
+  weather_hourly_data[, date := as.Date(as.character(date), format = "%Y-%m-%d")]
+}
+if ("date" %in% colnames(energy_hourly_data)) {
+  energy_hourly_data[, date := as.Date(as.character(date), format = "%Y-%m-%d")]
+}
+
+message("Deduplicating data...") # without it causes an error on merge
+weather_hourly_data <- unique(weather_hourly_data, by = c("date", "in.county"))
+energy_hourly_data <- unique(energy_hourly_data, by = c("date", "in.county"))
+
+# Merge energy and weather data 
+if (all(c("date", "in.county") %in% colnames(weather_hourly_data)) && 
+    all(c("date", "in.county") %in% colnames(energy_hourly_data))) {
+  message("Combining energy and weather data...")
+  combined_hourly_data <- merge(
+    energy_hourly_data,
+    weather_hourly_data,
+    by = c("date", "in.county"),
+    all.x = TRUE,
+    allow.cartesian = TRUE # Allow Cartesian join if needed
+  )
+} else {
+  stop("Required keys (`date`, `in.county`) are missing in weather or energy data.")
+}
+
+# add housing data with the combined dataset
+if ("bldg_id" %in% colnames(combined_hourly_data) && "bldg_id" %in% colnames(housing_data)) {
+  message("Adding housing data to the combined dataset...")
+  combined_hourly_data <- merge(
+    combined_hourly_data,
+    housing_data, # Merge all columns of housing_data
+    by = "bldg_id",
+    all.x = TRUE
+  )
+} else {
+  stop("`bldg_id` column is missing in combined or housing data.")
+}
+
+
+
+# output hourly combinded data set
+fwrite(combined_hourly_data, output_hourly_file)
+message("Final combined data saved to: ", output_hourly_file)
+
+print(head(combined_hourly_data))
+
+print(tail(combined_hourly_data))
+
+str(combined_hourly_data)
+
+################################################################################
+# DATA CLEANING (HOURLY)
+################################################################################
+
+# Analyze missing values
+analyze_missing_values <- function(data) {
+  missing_summary <- colSums(is.na(data))
+  missing_table <- data.frame(
+    Column = names(missing_summary),
+    Missing_Values = missing_summary,
+    Total_Values = nrow(data),
+    Percentage_Missing = (missing_summary / nrow(data)) * 100
+  )
+  print(missing_table)
+}
+analyze_missing_values(combined_hourly_data)
+
+  # # Check for missing columns and notify the user
+  # missing_columns <- setdiff(electricity_load_columns, colnames(combined_hourly_data))
+  # if (length(missing_columns) > 0) {
+  #   message("Warning: The following load columns are missing and will be treated as 0: ", 
+  #           paste(missing_columns, collapse = ", "))
+  #   combined_hourly_data[, (missing_columns) := 0]  # Add missing columns as 0
+  # }
+  
+# Initial data inspection
+cat("Initial number of rows in combined_hourly_data:", nrow(combined_hourly_data), "\n")
+
+# Filter out rows where `in.has_pv` is "yes"
+if ("in.has_pv" %in% colnames(combined_hourly_data)) {
+  combined_hourly_data <- combined_hourly_data[combined_hourly_data$in.has_pv != "yes", ]
+  cat("After removing rows with PV systems, rows left:", nrow(combined_hourly_data), "\n")
+} else {
+  cat("Column `in.has_pv` not found in combined_hourly_data. Skipping this filter.\n")
+}
+
+# Remove all renters
+if ("in.tenure" %in% colnames(combined_hourly_data)) {
+  combined_hourly_data <- combined_hourly_data[combined_hourly_data$in.tenure != "renter", ]
+  cat("After removing renters, rows left:", nrow(combined_hourly_data), "\n")
+} else {
+  cat("Column `in.tenure` not found in combined_hourly_data. Skipping this filter.\n")
+}
+
+# Remove all vacancies
+if ("in.vacancy_status" %in% colnames(combined_hourly_data)) {
+  combined_hourly_data <- combined_hourly_data[combined_hourly_data$in.vacancy_status != "vacant", ]
+  cat("After removing vacant properties, rows left:", nrow(combined_hourly_data), "\n")
+} else {
+  cat("Column `in.vacancy_status` not found in combined_hourly_data. Skipping this filter.\n")
+}
+
+# Check if combined_hourly_data is empty
+if (nrow(combined_hourly_data) == 0) {
+  cat("No data available after filtering. Please review the filtering criteria.\n")
+  stop("Dataset is empty. Aborting further analysis.")
+} else {
+  cat("Rows with PV systems, renters, and vacant properties have been removed from the combined_hourly_data table.\n")
+}
+
+
+
+```
+
+```{r}
+# total energy consumption column added
+
+# Add Total Energy Consumption column by summing all electricity-related variables
+
+if (exists("combined_hourly_data")) {
+  # Identify columns that match the pattern for electricity-related energy consumption
+  electricity_columns <- grep("^out\\.electricity\\..*\\.energy_consumption$", colnames(combined_hourly_data), value = TRUE)
+  
+  # Check if any electricity-related columns are found
+  if (length(electricity_columns) > 0) {
+    # Add Total Energy Consumption column
+    combined_hourly_data[, Total_Energy_Consumption := rowSums(.SD, na.rm = TRUE), .SDcols = electricity_columns]
+    message("Total Energy Consumption column added successfully.")
+  } else {
+    message("No electricity-related energy consumption columns found in combined_hourly_data.")
+  }
+} else {
+  message("`combined_hourly_data` does not exist. Skipping addition of Total Energy Consumption column.")
+}
+
+# Add Total Energy Consumption column by summing all electricity-related variables
+
+if (exists("combined_hourly_data")) {
+  # Identify columns that match the pattern for electricity-related energy consumption
+  electricity_columns <- grep("^out\\.electricity\\..*\\.energy_consumption$", colnames(combined_hourly_data), value = TRUE)
+  
+  # Check if any electricity-related columns are found
+  if (length(electricity_columns) > 0) {
+    # Add Total Energy Consumption column
+    combined_hourly_data[, Total_Energy_Consumption := rowSums(.SD, na.rm = TRUE), .SDcols = electricity_columns]
+    message("Total Energy Consumption column added successfully.")
+    
+    # Calculate the sum of the Total Energy Consumption column
+    total_energy_consumed <- sum(combined_hourly_data$Total_Energy_Consumption, na.rm = TRUE)
+    message("The total energy consumption across all rows: ", total_energy_consumed, " kWh (or equivalent units).")
+  } else {
+    message("No electricity-related energy consumption columns found in combined_hourly_data.")
+  }
+} else {
+  message("`combined_hourly_data` does not exist. Skipping addition of Total Energy Consumption column.")
+}
+
+# Efficiency count 
+# Summarize data by cooling efficiency
+hvac_efficiency_summary <- combined_data %>%
+  group_by(`in.hvac.cooling.efficiency`) %>%
+  summarise(
+    Total_Homes = n_distinct(bldg.id),  # Count unique homes for each efficiency status
+    Total_Cooling_Energy = sum(cooling, na.rm = TRUE),  # Total cooling energy for each efficiency status
+    HVAC_Types = paste(unique(`in.hvac.cooling.type`), collapse = ", ")  # List all HVAC types associated with the efficiency status
+  ) %>%
+  mutate(
+    Percentage_Housing_Stock = (Total_Homes / sum(Total_Homes)) * 100,  # Calculate percentage of housing stock
+    Percentage_Cooling_Energy = (Total_Cooling_Energy / sum(Total_Cooling_Energy)) * 100  # Calculate percentage of cooling energy consumption
+  ) %>%
+  arrange(desc(Total_Homes))  # Sort by total homes
+
+# Round percentages for clarity
+hvac_efficiency_summary <- hvac_efficiency_summary %>%
+  mutate(
+    Percentage_Housing_Stock = round(Percentage_Housing_Stock, 2),
+    Percentage_Cooling_Energy = round(Percentage_Cooling_Energy, 2)
+  )
+
+# Display the table
+library(knitr)
+library(ggplot2)
+
+# Create scatter plot for HVAC types and percentage of homes
+kable(hvac_efficiency_summary, caption = "HVAC Efficiency Summary: Total Homes, Housing Stock, and Cooling Energy Percentages")
+
+ggplot(hvac_efficiency_summary, aes(x = reorder(`in.hvac.cooling.efficiency`, -Percentage_Housing_Stock), y = Percentage_Housing_Stock)) +
+  geom_point(aes(color = HVAC_Types, size = Total_Homes), alpha = 0.8) +  # Points scaled by Total Homes and colored by HVAC type
+  labs(
+    title = "Percentage of Homes by Cooling Efficiency and HVAC Type",
+    x = "Cooling Efficiency Status",
+    y = "Percentage of Homes (%)",
+    color = "HVAC Type",
+    size = "Total Homes"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_color_brewer(palette = "Set2")
+
+
+
+
+```
+
+```{r}
+################################################################################
+# Model Development
+################################################################################
+
+
+# Identify the time of day with the highest average energy usage for July
+
+# Ensure the dataset contains only July data
+combined_hourly_data <- combined_hourly_data[month(date) == 7, ]
+message("Filtered dataset to include only July records.")
+
+# Aggregate energy usage by hour
+combined_hourly_data[, hour := hour(date_time)] # Extract the hour from the date_time column
+peak_hour <- combined_hourly_data[, .(average_energy = mean(Total_Energy_Consumption, na.rm = TRUE)), by = hour][order(-average_energy)][1]
+
+# Filter data for the identified peak hour
+peak_data <- combined_hourly_data[hour == peak_hour$hour]
+message("The hour with the highest energy usage in July is: ", peak_hour$hour)
+
+# Ensure that `date_time` is treated as a POSIXct variable
+if (!inherits(peak_data$date_time, "POSIXct")) {
+  peak_data$date_time <- as.POSIXct(peak_data$date_time, format = "%Y-%m-%d %H:%M:%S")
+}
+message("Confirmed and formatted the 'date_time' column.")
+
+################################################################################
+# Model 1 - Temperature and Cooling-Related Loads Only
+################################################################################
+
+message("Building Model 1 - Temperature and Cooling-Related Loads...")
+
+model_1 <- lm(
+  out.electricity.cooling.energy_consumption ~ Dry.Bulb.Temperature...C. + 
+    out.electricity.cooling_fans_pumps.energy_consumption + 
+    out.electricity.ceiling_fan.energy_consumption,
+  data = peak_data
+)
+
+message("Model 1 Summary:")
+print(summary(model_1))
+message("Model 1 is Complete.")
+
+################################################################################
+# Model 2 - Major Load Users
+################################################################################
+
+message("Building Model 2 - Major Load Users...")
+
+model_2 <- lm(
+  out.electricity.cooling.energy_consumption ~ Dry.Bulb.Temperature...C. + 
+    out.electricity.cooling_fans_pumps.energy_consumption + 
+    out.electricity.plug_loads.energy_consumption + 
+    out.electricity.lighting_interior.energy_consumption + 
+    date_time,
+  data = peak_data
+)
+
+message("Model 2 Summary:")
+print(summary(model_2))
+message("Model 2 is Complete.")
+
+################################################################################
+# Model 3 - Temperature and Date/Time
+################################################################################
+
+message("Building Model 3 - Temperature and Date/Time...")
+
+model_3 <- lm(
+  out.electricity.cooling.energy_consumption ~ Dry.Bulb.Temperature...C. + 
+    date_time,
+  data = peak_data
+)
+
+message("Model 3 Summary:")
+print(summary(model_3))
+message("Model 3 is Complete.")
+
+################################################################################
+# Model 4 - All Factors
+################################################################################
+
+message("Building Model 4 - All Factors...")
+
+model_4 <- lm(
+  out.electricity.cooling.energy_consumption ~ Dry.Bulb.Temperature...C. + 
+    out.electricity.cooling_fans_pumps.energy_consumption + 
+    out.electricity.plug_loads.energy_consumption + 
+    out.electricity.lighting_interior.energy_consumption + 
+    out.electricity.ceiling_fan.energy_consumption + 
+    date_time,
+  data = peak_data
+)
+
+message("Model 4 Summary:")
+print(summary(model_4))
+message("Model 4 is Complete.")
+
+
+```
+
+
+```{r}
+################################################################################
+# Model Development - Model 2 Only
+################################################################################
+
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+plot_data <- peak_data %>%
+  select(
+    out.electricity.cooling.energy_consumption,
+    Dry.Bulb.Temperature...C.,
+    out.electricity.cooling_fans_pumps.energy_consumption,
+    out.electricity.lighting_interior.energy_consumption,
+    out.electricity.ceiling_fan.energy_consumption
+  ) %>%
+  pivot_longer(
+    cols = -out.electricity.cooling.energy_consumption,
+    names_to = "Predictor",
+    values_to = "Value"
+  )
+
+# Update Labels
+label_mapping <- c(
+  "Dry.Bulb.Temperature...C." = "Temperature (°C)",
+  "out.electricity.cooling_fans_pumps.energy_consumption" = "Cooling Fans & Pumps",
+  "out.electricity.lighting_interior.energy_consumption" = "Lighting Interior",
+  "out.electricity.ceiling_fan.energy_consumption" = "Ceiling Fan",
+  "out.electricity.plug_loads.energy_consumption" = "Plug Loads"
+)
+plot_data <- plot_data %>%
+  mutate(Predictor = recode(Predictor, !!!label_mapping))
+
+# Plot model
+ggplot(plot_data, aes(x = Value, y = out.electricity.cooling.energy_consumption)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  facet_wrap(~ Predictor, scales = "free_x") +
+  labs(
+    title = "Scatter Plots of Predictors vs Cooling Energy Consumption",
+    x = "Predictor Value",
+    y = "Cooling Energy Consumption (kWh)"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+
+
+
