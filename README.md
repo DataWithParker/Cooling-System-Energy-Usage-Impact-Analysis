@@ -48,7 +48,7 @@ This project investigates how residential cooling systems impact electricity con
   - Temperature vs. consumption correlation
   - Regression visualization (scatterplots, trendlines)
 
-### **Model and Results** 
+## **Model and Results** 
 
 **Selected Model Type:** Linear Regression 
 
