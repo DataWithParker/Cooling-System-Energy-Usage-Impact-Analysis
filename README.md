@@ -48,19 +48,19 @@ This project investigates how residential cooling systems impact electricity con
   - Temperature vs. consumption correlation
   - Regression visualization (scatterplots, trendlines)
 
-**Model and Results** 
+### **Model and Results** 
 
-  **Selected Model Type:** Linear Regression 
+**Selected Model Type:** Linear Regression 
 
-  *Performance*
-    - R² = 0.8704
-    - P-value < 2.2e-16
-    - Features used: Cooling load, plug loads, lighting load, temperature, hour-of-day
+*Performance*
+- R² = 0.8704
+- P-value < 2.2e-16
+- Features used: Cooling load, plug loads, lighting load, temperature, hour-of-day
 
-  *Model Interpretation*
-    - Cooling is the strongest predictor of total consumption.
-    - Plug loads and lighting contribute but are less impactful.
-    - Temperature and time of day amplify cooling demand.
+*Model Interpretation*
+- Cooling is the strongest predictor of total consumption.
+- Plug loads and lighting contribute but are less impactful.
+- Temperature and time of day amplify cooling demand.
 
 **Climate Scenario Analysis**
 
