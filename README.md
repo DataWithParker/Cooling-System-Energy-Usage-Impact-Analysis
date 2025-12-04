@@ -102,5 +102,3 @@ Upgrading cooling equipment offers the largest reduction potential
 Prerequisites
 - R 4.0+
 - Required libraries: readr, dplyr, purrr, httr, lubridate, stringr, tidyverse, data.table, ggplot2, tidyr, and knitr
-
-## Visualizations
